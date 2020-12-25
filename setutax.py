@@ -3,7 +3,6 @@
 import random
 import asyncio
 import os
-import urllib.request,urllib.error
 import sqlite3
 import re
 import shutil
@@ -22,7 +21,7 @@ sv = Service('setutax', help_='''一起实现群色图自由吧！
 _flmt = FreqLimiter(10)
 
 GO_CQHTTP_PATH = 'D:/BOT/Go/'
-
+RE_CQIMG = r"\[CQ:image,file=(?P<file>[^,\[\]]*?),url=(?P<url>[^,\[\]]*?)\]"
 TAX_TIMEOUT = 60
 
 class TaxMaster:
@@ -79,7 +78,10 @@ async def on_rcv_setu(bot, ev: CQEvent):
     if not tax:
         return
     content = str(ev.message)
-    #先判断是不是合并转发
+    path = R.img(f'setutax/{ev.group_id}/').path
+    if not os.path.exists(path):
+        os.makedirs(R.img(f'setutax/{ev.group_id}/').path)
+    #判断是不是合并转发
     fwid = ''
     for m in ev.message:
         if m["type"] =="forward":
@@ -90,53 +92,40 @@ async def on_rcv_setu(bot, ev: CQEvent):
         mm = await bot.get_forward_msg(message_id=fwid)
         ct = 0
         err = 0
-        mk = 0
         if 'messages' in mm:
             for msg in mm["messages"]:
                 content = msg["content"]
-                mk=0
-                aa = content.find('[CQ:image,file=',mk)
-                cc = content.find(',url=',mk)
-                if aa>=0 and cc>0:
-                    path = R.img(f'setutax/{ev.group_id}/').path
-                    if not os.path.exists(path):
-                        os.makedirs(R.img(f'setutax/{ev.group_id}/').path)
-                    while aa>=0 and cc>0:
-                        #是图片
-                        mk = cc+1
-                        filename = content[aa+15:cc]
-                        url = content[cc+5:content.find(']',cc)]
+                match = re.findall(RE_CQIMG,content)
+                if match:
+                    for m in match:
                         try:
-                            ltpic = os.path.join(R.img(f'setutax/{ev.group_id}/').path, filename + ".jpg")
-                            urllib.request.urlretrieve(url,ltpic)
-                            tax.record(filename + ".jpg")
-                            ct += 1
-                        except Exception as e:
-                            #logger.error(filename+'.jpg,下载错误：',e)
+                            cachefile = await bot.get_image(file=m[0])
+                            if type(cachefile) == dict:
+                                fname = cachefile["file"]
+                                fname = fname[fname.rfind('/')+1:]
+                                size = cachefile["size"]
+                                if size <= 3145728:
+                                    shutil.move(GO_CQHTTP_PATH+cachefile["file"], path)
+                                    ct += 1
+                                    tax.record(fname)
+                                else:
+                                    #文件过大，删掉缓存
+                                    largepic+=1
+                            else:
+                                err += 1
+                        except:
                             err += 0
-                        aa = content.find('[CQ:image,file=',mk)
-                        cc = content.find(',url=',mk)
-        tax.ct +=ct
-        await bot.send(ev,f"收到合并转发的图片，下载成功{ct}张，下载失败{err}张")
+            tax.ct +=ct
+            await bot.send(ev,f"收到合并转发的图片，下载成功{ct}张，下载失败{err}张")
     else:
-        mk=0
-        aa = content.find('[CQ:image,file=',mk)
-        cc = content.find(',url=',mk)
         ct = 0
         err = 0
         largepic = 0
-        if aa>=0 and cc>0:
-            path = R.img(f'setutax/{ev.group_id}/').path
-            if not os.path.exists(path):
-                os.makedirs(R.img(f'setutax/{ev.group_id}/').path)
-
-            while aa>=0 and cc>0:
-                #是图片
-                mk = cc+1
-                filename = content[aa+15:cc]
-                url = content[cc+5:content.find(']',cc)]
+        match = re.findall(RE_CQIMG,content)
+        if match:
+            for m in match:
                 try:
-                    cachefile = await bot.get_image(file=filename)
+                    cachefile = await bot.get_image(file=m[0])
                     if type(cachefile) == dict:
                         fname = cachefile["file"]
                         fname = fname[fname.rfind('/')+1:]
@@ -145,20 +134,18 @@ async def on_rcv_setu(bot, ev: CQEvent):
                             shutil.move(GO_CQHTTP_PATH+cachefile["file"], path)
                             ct += 1
                             tax.record(fname)
-                            print("下载成功1张")
                         else:
-                            #文件过大，删掉缓存c
+                            #文件过大，删掉缓存
                             largepic+=1
                     else:
                         err += 1
-                except Exception as e:
+                except:
                     err += 1
-                aa = content.find('[CQ:image,file=',mk)
-                cc = content.find(',url=',mk)
             tax.ct +=ct
             tax.timeout = datetime.now()+timedelta(seconds=TAX_TIMEOUT)
             str2 = '' if largepic==0 else f'，{largepic}张超大图片未保存'
             await bot.send(ev, f"收到图片：{ct}张{str2}")
+
 
 
 
